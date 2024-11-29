@@ -11,29 +11,64 @@ jobs:
     environment: Production
 
     steps:
+    - name: Debug Info
+      run: |
+        echo "Repository: ${{ github.repository }}"
+        echo "Ref: ${{ github.ref }}"
+        pwd
+        ls -la
+
     - name: Clone Repository
       run: |
-        git clone https://github.com/${{ github.repository }}.git .
+        git init
+        git remote add origin "https://x-access-token:${{ secrets.GITHUB_TOKEN }}@github.com/${{ github.repository }}.git"
+        git fetch origin
+        git checkout main || git checkout master
         git config --global user.email "github-actions[bot]@users.noreply.github.com"
         git config --global user.name "github-actions[bot]"
 
-    - name: Setup Environment
-      uses: ./.github/actions/setup
+    - name: Verify Repository Content
+      run: |
+        echo "Current directory contents:"
+        ls -la
+        echo "Git status:"
+        git status
+
+    - name: Setup Python
+      run: |
+        sudo apt-get update
+        sudo apt-get install -y python3 python3-pip
+        python3 -m pip install --upgrade pip
+        python3 --version
+        pip --version
 
     - name: Install Dependencies
       run: |
-        python3 -m pip install -r requirements.txt
+        if [ -f "requirements.txt" ]; then
+          python3 -m pip install -r requirements.txt
+        else
+          echo "requirements.txt not found!"
+          exit 1
+        fi
 
     - name: Run Poster Script
       env:
         BLUESKY_HANDLE: ${{ secrets.BLUESKY_HANDLE }}
         BLUESKY_PASSWORD: ${{ secrets.BLUESKY_PASSWORD }}
-        GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
       run: |
-        python3 src/post_to_bluesky.py
+        if [ -f "src/post_to_bluesky.py" ]; then
+          python3 src/post_to_bluesky.py
+        else
+          echo "post_to_bluesky.py not found!"
+          echo "Current directory:"
+          pwd
+          echo "Directory contents:"
+          ls -la
+          exit 1
+        fi
 
     - name: Commit and Push Changes
       run: |
-        git add posted_entries.json
-        git commit -m "Update posted entries" -a || echo "No changes to commit"
-        git push https://${{ secrets.GITHUB_TOKEN }}@github.com/${{ github.repository }}.git
+        git add .
+        git commit -m "Update posted entries" || echo "No changes to commit"
+        git push origin HEAD || echo "No changes to push"
