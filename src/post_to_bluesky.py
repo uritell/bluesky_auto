@@ -53,7 +53,7 @@ def main():
     client.login(os.environ['BLUESKY_HANDLE'], os.environ['BLUESKY_PASSWORD'])
 
     # RSS feed URL - replace with your desired RSS feed
-    rss_url = "https://www.theguardian.com/environment/climate-crisis/rss"
+    rss_url = "https://your-rss-feed-url.com/feed"
 
     # Load previously posted entries
     posted_entries = load_posted_entries()
