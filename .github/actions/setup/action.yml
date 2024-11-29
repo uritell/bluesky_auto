@@ -1,0 +1,13 @@
+name: 'Setup Environment'
+description: 'Setup Python and Git environment'
+runs:
+  using: "composite"
+  steps:
+    - run: |
+        sudo apt-get update
+        sudo apt-get install -y python3 python3-pip git
+        python3 -m pip install --upgrade pip
+        git config --global --add safe.directory "$GITHUB_WORKSPACE"
+        git fetch --prune --unshallow || git fetch --prune
+        git checkout "${GITHUB_REF#refs/heads/}"
+      shell: bash
