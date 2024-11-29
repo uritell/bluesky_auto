@@ -8,7 +8,7 @@ on:
 jobs:
   post:
     runs-on: ubuntu-latest
-    environment: production  # Use your environment name here
+    environment: Production  # Use your environment name here
 
     steps:
       - name: Checkout code
