@@ -6,7 +6,7 @@ Automatically post RSS feed content to Bluesky Social with AI-generated relevant
 
 - 🤖 Automated posting from RSS feeds to Bluesky
 - 🏷️ AI-powered hashtag generation using Google's Gemini
-- 🔄 Runs every 4 hours (configurable)
+- 🔄 Runs every hour (configurable)
 - 📝 Tracks posted content to avoid duplicates
 - ⚡ Easy setup using GitHub Actions
 
