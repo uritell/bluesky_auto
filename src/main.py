@@ -5,58 +5,77 @@ import time
 from datetime import datetime, timezone
 from dotenv import load_dotenv
 from atproto import Client
+import atexit
+import signal
+import sys
 
 from agents.gemini_agent import setup_gemini, generate_hashtags
-from agents.rss_agent import fetch_rss_feed, get_new_entries
 from agents.bluesky_agent import create_post_content
-from storage import load_posted_entries, save_posted_entries
+from agents.health_news_agent import get_latest_health_news
+from storage import load_posted_entries, save_posted_entry
 
 load_dotenv()  # Load environment variables from .env
 
+def cleanup():
+    """Cleanup function to handle graceful shutdown"""
+    print("[Main] Performing cleanup...")
+    # Add a small delay to allow pending operations to complete
+    time.sleep(0.5)
+
+def signal_handler(signum, frame):
+    """Handle interrupt signals"""
+    print("[Main] Received shutdown signal. Cleaning up...")
+    cleanup()
+    sys.exit(0)
+
 def main():
-    # Initialize Gemini agent
-    model = setup_gemini()
-    print("Gemini model initialized")
+    try:
+        # Register cleanup handlers
+        atexit.register(cleanup)
+        signal.signal(signal.SIGINT, signal_handler)
+        signal.signal(signal.SIGTERM, signal_handler)
 
-    # Initialize Bluesky client and login
-    client = Client()
-    client.login(os.environ['BLUESKY_HANDLE'], os.environ['BLUESKY_PASSWORD'])
-    print("Logged into Bluesky")
-    access_token = client._session.access_jwt
+        # Initialize Gemini agent using context manager
+        with setup_gemini() as model:
+            print("[Main] Gemini model initialized")
 
-    # Fetch RSS feed
-    rss_url = "https://www.theguardian.com/uk/culture/rss"
-    print(f"Fetching RSS feed from: {rss_url}")
-    feed = fetch_rss_feed(rss_url)
-    print(f"Found {len(feed.entries)} entries")
+            # Initialize Bluesky client and login
+            client = Client()
+            client.login(os.environ['BLUESKY_HANDLE'], os.environ['BLUESKY_PASSWORD'])
+            print("[Main] Logged into Bluesky")
+            access_token = client._session.access_jwt
 
-    # Load posted entries and determine new entries
-    posted_entries = load_posted_entries()
-    new_entries = get_new_entries(feed, posted_entries)
-    print(f"{len(new_entries)} new entries to post")
+            # Use the Health News agent to get today's news on health tips
+            news_api_key = os.environ.get("NEWS_API_KEY")
+            if not news_api_key:
+                print("[Main] Missing NEWS_API_KEY environment variable.")
+                return
 
-    for entry_id, entry in new_entries:
-        # Generate hashtags using Gemini
-        hashtags = generate_hashtags(entry.title, entry.get('description', ''), model)
-        # Create post content with facets and embed card
-        content, facets, embed = create_post_content(entry, hashtags, access_token)
-        try:
-            # Send post to Bluesky
-            client.send_post(text=content, facets=facets, embed=embed)
-            # Mark entry as posted
-            posted_entries[entry_id] = {
-                'title': entry.title,
-                'date_posted': datetime.now(timezone.utc).isoformat(),
-                'hashtags': hashtags
-            }
-            print(f"Posted: {entry.title}")
-            time.sleep(2)  # Wait to avoid rate limiting
-        except Exception as e:
-            print(f"Error posting {entry.title}: {e}")
+            article = get_latest_health_news(news_api_key, model)
+            if not article:
+                print("[Main] No suitable health news found.")
+                return
 
-    # Save updated posted entries list
-    save_posted_entries(posted_entries)
-    print("Finished processing.")
+            hashtags = generate_hashtags(article['title'], article.get('description', ''), model)
+            content, facets, embed = create_post_content(article, hashtags, access_token)
+            
+            if content is None:
+                print("[Main] Skipping article due to content issues")
+                return
+
+            try:
+                client.send_post(text=content, facets=facets, embed=embed)
+                print(f"[Main] Posted: {article['title']}")
+                # Save the URL to avoid reposting the same article
+                save_posted_entry(article['url'])
+                print("[Main] Updated posted_entries.json")
+            except Exception as e:
+                print(f"[Main] Error posting article: {article['title']}, Error: {e}")
+
+    except Exception as e:
+        print(f"[Main] Fatal error: {e}")
+    finally:
+        cleanup()
 
 if __name__ == '__main__':
     main()
