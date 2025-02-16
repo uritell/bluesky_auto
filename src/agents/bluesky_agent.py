@@ -2,6 +2,10 @@
 
 import requests
 from bs4 import BeautifulSoup
+import regex
+import time
+from storage import load_posted_entries  # Example import if needed
+from typing import Tuple, Optional, Any, Dict
 
 def fetch_embed_url_card(access_token: str, url: str) -> dict:
     """Create embed card for URL with proper error handling."""
@@ -63,82 +67,108 @@ def fetch_embed_url_card(access_token: str, url: str) -> dict:
         return None
 
 def validate_url_accessibility(url: str) -> bool:
-    """
-    Check if a URL is accessible by making a HEAD request.
-    Returns True if the URL is accessible, False otherwise.
-    """
-    if not url:
-        print("[Bluesky Agent] Empty URL provided")
-        return False
-        
+    """Validate if a URL is accessible."""
     try:
-        # Ensure URL has a scheme
-        if not url.startswith(('http://', 'https://')):
-            url = 'https://' + url
-            
-        print(f"[Bluesky Agent] Validating URL accessibility: {url}")
         response = requests.head(url, timeout=10, allow_redirects=True)
-        
-        # Check if status code indicates success (2xx) or redirect (3xx)
-        if response.status_code < 400:
-            print(f"[Bluesky Agent] URL is accessible (Status: {response.status_code})")
-            return True
-        else:
-            print(f"[Bluesky Agent] URL returned error status: {response.status_code}")
-            return False
-            
-    except requests.RequestException as e:
-        print(f"[Bluesky Agent] Error checking URL accessibility: {str(e)}")
+        return response.status_code == 200
+    except:
         return False
 
-def create_post_content(entry, hashtags: list, access_token: str):
+def count_graphemes(text: str) -> int:
+    """Count the number of graphemes in the text."""
+    return len(regex.findall(r'\X', text))
+
+def truncate_to_graphemes(text: str, limit: int) -> str:
+    """Truncate text to specified number of graphemes."""
+    graphemes = regex.findall(r'\X', text)
+    if len(graphemes) <= limit:
+        return text
+    return ''.join(graphemes[:limit])
+
+def create_post_content(entry: Dict[str, Any], hashtags: list, access_token: str) -> Tuple[Optional[str], Optional[list], Optional[Any]]:
     """
-    Build the content text, facets, and embed for a Bluesky post.
-    Returns None if the URL is not accessible.
+    Build clean, engaging post content for Bluesky.
+    Uses proper byte indexing for facets as per Bluesky documentation.
     """
-    title = entry.get('title', '')
-    link = entry.get('url', entry.get('link', ''))
-    
-    print(f"[Bluesky Agent] Creating post for article: {title}")
-    print(f"[Bluesky Agent] Using URL: {link}")
-    
-    # Validate URL accessibility before proceeding
-    if not validate_url_accessibility(link):
-        print(f"[Bluesky Agent] URL is not accessible, skipping article")
+    try:
+        title = entry.get('title', '')
+        description = entry.get('description', '')
+        link = entry.get('url', entry.get('link', ''))
+        
+        # Select emoji and create title line
+        leading_emoji = get_emoji_for_title(title)  # Your existing emoji selection logic
+        title_line = f"{leading_emoji} {title}"
+        
+        # Keep full description
+        description = description.strip()
+        
+        # Clean hashtags and ensure they're properly formatted
+        cleaned_hashtags = []
+        for tag in hashtags[:3]:
+            # Remove # and clean the tag
+            clean_tag = tag.lstrip('#')
+            # Remove spaces and join with camelCase
+            clean_tag = ''.join(word.capitalize() for word in clean_tag.split())
+            cleaned_hashtags.append(f"#{clean_tag}")
+        
+        # Assemble content
+        content = f"{title_line}\n\n{description}\n\n{' '.join(cleaned_hashtags)}"
+        
+        # Create facets with proper byte indexing
+        facets = []
+        content_bytes = content.encode('utf-8')
+        
+        for tag in cleaned_hashtags:
+            # Find the tag in the content
+            tag_start_char = content.find(tag)
+            if tag_start_char != -1:
+                # Convert character position to byte position
+                tag_start_byte = len(content[:tag_start_char].encode('utf-8'))
+                tag_end_byte = tag_start_byte + len(tag.encode('utf-8'))
+                
+                facets.append({
+                    'index': {
+                        'byteStart': tag_start_byte,
+                        'byteEnd': tag_end_byte
+                    },
+                    'features': [{
+                        '$type': 'app.bsky.richtext.facet#tag',
+                        'tag': tag.lstrip('#')
+                    }]
+                })
+        
+        # Create embed card for the URL
+        embed = fetch_embed_url_card(access_token, link) if link else None
+        
+        print(f"[Bluesky Agent] Post content created with {len(facets)} facets")
+        return content, facets, embed
+
+    except Exception as e:
+        print(f"[Bluesky Agent] Error creating post content: {str(e)}")
         return None, None, None
+
+def get_emoji_for_title(title: str) -> str:
+    """Helper function to select appropriate emoji for the title."""
+    emoji_map = {
+        'fasting': '⏱️',
+        'aging': '⌛',
+        'longevity': '🧬',
+        'health': '💚',
+        'nutrition': '🥗',
+        'supplement': '💊',
+        'news': '📰',
+        'roundup': '📅',
+        'cardiac': '❤️',
+        'diabetes': '💉',
+        'ketones': '💪',
+        'exercise': '💪',
+        'muscle': '💪',
+    }
     
-    hashtag_text = ' '.join(hashtags[:3])  # Limit to 3 hashtags
-    content = f"{link}\n\n{hashtag_text}"
+    leading_emoji = '🔬'  # default emoji
+    for keyword, emoji in emoji_map.items():
+        if keyword.lower() in title.lower():
+            leading_emoji = emoji
+            break
 
-    facets = []
-    if link:
-        link_start = 0
-        facets.append({
-            'index': {
-                'byteStart': link_start,
-                'byteEnd': len(link)
-            },
-            'features': [{
-                '$type': 'app.bsky.richtext.facet#link',
-                'uri': link
-            }]
-        })
-
-    for hashtag in hashtags[:3]:
-        tag_start = content.find(hashtag)
-        if tag_start != -1:
-            facets.append({
-                'index': {
-                    'byteStart': tag_start,
-                    'byteEnd': tag_start + len(hashtag)
-                },
-                'features': [{
-                    '$type': 'app.bsky.richtext.facet#tag',
-                    'tag': hashtag[1:]
-                }]
-            })
-
-    embed = fetch_embed_url_card(access_token, link) if link else None
-    
-    print(f"[Bluesky Agent] Post content created with {len(facets)} facets")
-    return content, facets, embed
+    return leading_emoji
